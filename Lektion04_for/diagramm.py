@@ -13,11 +13,47 @@ ob die Bedingung im jeweiligen Durchlauf erfüllt war.
 
 Hinter %%diagramm kann der Name der Variablen stehen, die gezeigt werden soll,
 zum Beispiel:  %%diagramm bremsweg
+
+
+Für Neugierige
+--------------
+Schön, dass Sie hineinschauen. Die Diagramme zeichnet das Paket matplotlib.
+Ein Balkendiagramm können Sie damit schon selbst schreiben, mit einer
+for-Schleife. Probieren Sie es in einer leeren Zelle aus:
+
+    import matplotlib.pyplot as plt
+
+    for x in range(1, 6):
+        plt.bar(x, x * x)        # ein Balken an der Stelle x mit der Höhe x * x
+    plt.xlabel("x")
+    plt.ylabel("x * x")
+    plt.show()                   # erst jetzt erscheint das Bild
+
+Diese Datei hat drei Teile:
+
+    Teil 1  untersucht Ihr Programm und merkt sich die Werte jedes Durchlaufs.
+            Dieser Teil ist fortgeschritten, Sie müssen ihn nicht verstehen.
+    Teil 2  zeichnet das Diagramm mit matplotlib. Hier lohnt sich das Lesen.
+    Teil 3  führt Ihre Zelle aus und meldet %%diagramm im Notebook an.
+
+Die Datei verwendet Sprachmittel, die Sie erst später kennenlernen:
+Funktionen (def), Listen ([...]) und Wörterbücher ({...}).
 """
 import ast
 
-_FARBE_JA = "tab:blue"
-_FARBE_NEIN = "tab:orange"
+_FARBE_JA = "tab:blue"        # Bedingung erfüllt
+_FARBE_NEIN = "tab:orange"    # Bedingung nicht erfüllt
+
+
+# ---------------------------------------------------------------------------
+# Teil 1: Ihr Programm untersuchen (fortgeschritten)
+#
+# Python kann ein Programm nicht nur ausführen, sondern auch lesen: Das Modul
+# ast zerlegt den Programmtext in einen Baum aus Anweisungen. Dieser Teil sucht
+# darin die erste for-Schleife und fügt in den Schleifenkörper unsichtbare
+# Zusatzzeilen ein. Sie notieren in jedem Durchlauf die Werte der Variablen.
+# Ihr Programm in der Zelle bleibt dabei unverändert.
+# ---------------------------------------------------------------------------
 
 
 def _ist_zahl(wert):
@@ -46,8 +82,10 @@ def _instrumentieren(baum):
     laufvariable = schleife.target.id
 
     info = {"laufvariable": laufvariable, "kandidaten": [], "bedingung": None}
+    # neuer Schleifenkörper: zuerst "ein Durchlauf beginnt" notieren ...
     neu = [_aufruf("__dg_start", ast.Name(id=laufvariable, ctx=ast.Load()))]
     for anweisung in schleife.body:
+        # ... bei der ersten Auswahl notieren, ob die Bedingung erfüllt war ...
         if isinstance(anweisung, ast.If) and info["bedingung"] is None:
             info["bedingung"] = anweisung.test
             info["bedingung_text"] = ast.unparse(anweisung.test)
@@ -59,6 +97,7 @@ def _instrumentieren(baum):
             namen = [z.id for z in anweisung.targets if isinstance(z, ast.Name)]
         elif isinstance(anweisung, ast.AugAssign) and isinstance(anweisung.target, ast.Name):
             namen = [anweisung.target.id]
+        # ... und nach jeder Zuweisung den neuen Wert der Variablen notieren
         for name in namen:
             if name == laufvariable:
                 continue
@@ -87,12 +126,20 @@ def _grenze(info, y_name, namensraum):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Teil 2: Zeichnen mit matplotlib
+#
+# durchlaeufe enthält für jeden Schleifendurchlauf den Wert der Laufvariablen
+# und die Werte der berechneten Variablen. Daraus entsteht das Diagramm.
+# ---------------------------------------------------------------------------
 def _zeichnen(info, durchlaeufe, wunsch, namensraum):
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt     # plt ist nur ein kurzer Name für das Paket
 
     def zahlenreihe(name):
         return [d for d in durchlaeufe if _ist_zahl(d["werte"].get(name)) and _ist_zahl(d["x"])]
 
+    # Welche Variable wird gezeigt? Die gewünschte, sonst "anhalteweg",
+    # sonst die Variable, die in der Schleife zuletzt berechnet wird.
     if wunsch:
         if not zahlenreihe(wunsch):
             print(f"Diagramm: Die Variable {wunsch} wird in der Schleife nicht als Zahl berechnet.")
@@ -109,16 +156,20 @@ def _zeichnen(info, durchlaeufe, wunsch, namensraum):
                   "zum Beispiel  anhalteweg = ...  Dann kann ich ihn zeichnen.")
             return
 
+    # Balkenbreite: 80 % des Abstands zwischen zwei Werten der Laufvariablen,
+    # damit zwischen den Balken eine Lücke bleibt
     punkte = zahlenreihe(y_name)
     xs = [d["x"] for d in punkte]
     abstaende = [b - a for a, b in zip(sorted(set(xs)), sorted(set(xs))[1:])]
     breite = 0.8 * min(abstaende) if abstaende else 0.8
 
-    plt.figure(figsize=(7, 4.2))
+    plt.figure(figsize=(7, 4.2))        # neues, leeres Bild; Breite und Höhe in Zoll
     mit_bedingung = info["bedingung"] is not None and any(d["flag"] is not None for d in punkte)
     if mit_bedingung:
         ja = [d for d in punkte if d["flag"]]
         nein = [d for d in punkte if not d["flag"]]
+        # plt.bar(Stellen, Höhen) zeichnet Balken. Hier bekommt es alle Balken
+        # einer Farbe auf einmal als Liste. label ist der Text für die Legende.
         if ja:
             plt.bar([d["x"] for d in ja], [d["werte"][y_name] for d in ja], width=breite,
                     color=_FARBE_JA, label=f"{info['bedingung_text']}: erfüllt")
@@ -127,20 +178,26 @@ def _zeichnen(info, durchlaeufe, wunsch, namensraum):
                     color=_FARBE_NEIN, label=f"{info['bedingung_text']}: nicht erfüllt")
         grenze = _grenze(info, y_name, namensraum)
         if grenze:
+            # waagrechte gestrichelte Linie auf der Höhe des Grenzwerts
             plt.axhline(grenze[1], color="black", linestyle="--", label=grenze[0])
-        plt.legend()
+        plt.legend()                    # zeigt die label-Texte in einem Kasten
     else:
         plt.bar(xs, [d["werte"][y_name] for d in punkte], width=breite, color=_FARBE_JA)
 
+    # Titel und Achsenbeschriftung
     anzahl = len(durchlaeufe)
     plt.title(f"Ein Balken pro Schleifendurchlauf ({anzahl} Durchläufe)")
     plt.xlabel(f"Laufvariable {info['laufvariable']}")
     plt.ylabel(y_name)
-    plt.show()
+    plt.show()                          # erst jetzt erscheint das Bild
 
 
+# ---------------------------------------------------------------------------
+# Teil 3: Die Zelle ausführen und %%diagramm anmelden
+# ---------------------------------------------------------------------------
 def diagramm(zeile, zelle):
     """Zellmagie %%diagramm: führt die Zelle aus und zeichnet die for-Schleife."""
+    # zelle ist der Text Ihrer Zelle, zeile der Text hinter %%diagramm
     from IPython import get_ipython
     shell = get_ipython()
     quelltext = shell.transform_cell(zelle) if shell else zelle
@@ -161,7 +218,7 @@ def diagramm(zeile, zelle):
     import linecache
     zeilen = quelltext.splitlines(keepends=True)
     linecache.cache["<Ihr Programm>"] = (len(quelltext), None, zeilen, "<Ihr Programm>")
-    durchlaeufe = []
+    durchlaeufe = []                    # hier sammeln sich die Notizen aus Teil 1
 
     def start(x):
         durchlaeufe.append({"x": x, "werte": {}, "flag": None})
@@ -177,6 +234,7 @@ def diagramm(zeile, zelle):
 
     namensraum.update({"__dg_start": start, "__dg_set": setzen, "__dg_flag": flag})
     try:
+        # Ihr Programm (mit den Zusatzzeilen) ausführen
         exec(compile(baum, "<Ihr Programm>", "exec"), namensraum)
     except Exception:
         if shell:
@@ -196,9 +254,11 @@ def diagramm(zeile, zelle):
 
 
 def load_ipython_extension(shell):
+    # macht dem Notebook bekannt, dass %%diagramm die Funktion diagramm aufruft
     shell.register_magic_function(diagramm, magic_kind="cell", magic_name="diagramm")
 
 
+# Diese Zeilen laufen bei "import diagramm" und melden %%diagramm an.
 try:
     from IPython import get_ipython as _get_ipython
     if _get_ipython() is not None:
