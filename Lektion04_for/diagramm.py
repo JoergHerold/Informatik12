@@ -4,12 +4,13 @@ Verwendung im Notebook:
 
     import diagramm          (einmal ausführen)
 
-    %%diagramm               (erste Zeile einer Zelle, darunter das eigene Programm)
+    %%diagramm               (über das eigene Programm setzen; Kommentare
+                             und Leerzeilen darüber sind erlaubt)
 
 Das Programm läuft wie gewohnt. Zusätzlich wird jeder Schleifendurchlauf zu
 einem Balken: waagrecht die Laufvariable, senkrecht die Variable, die in der
-Schleife berechnet wird. Enthält die Schleife eine Auswahl, zeigt die Farbe,
-ob die Bedingung im jeweiligen Durchlauf erfüllt war.
+Schleife berechnet und mit print ausgegeben wird. Enthält die Schleife eine
+Auswahl, zeigt die Farbe, ob die Bedingung im jeweiligen Durchlauf erfüllt war.
 
 Hinter %%diagramm kann der Name der Variablen stehen, die gezeigt werden soll,
 zum Beispiel:  %%diagramm bremsweg
@@ -67,6 +68,18 @@ def _erste_for_schleife(baum):
     return min(schleifen, key=lambda k: (k.lineno, k.col_offset))
 
 
+def _ausgegebene_namen(schleife):
+    """Sammelt die Namen aller Variablen, die in der Schleife in einem print stehen."""
+    namen = set()
+    for knoten in ast.walk(schleife):
+        if (isinstance(knoten, ast.Call) and isinstance(knoten.func, ast.Name)
+                and knoten.func.id == "print"):
+            for teil in ast.walk(knoten):
+                if isinstance(teil, ast.Name):
+                    namen.add(teil.id)
+    return namen
+
+
 def _aufruf(name, *argumente):
     return ast.Expr(ast.Call(func=ast.Name(id=name, ctx=ast.Load()),
                              args=list(argumente), keywords=[]))
@@ -81,7 +94,8 @@ def _instrumentieren(baum):
         return None, "Die Laufvariable der for-Schleife muss ein einzelner Name sein."
     laufvariable = schleife.target.id
 
-    info = {"laufvariable": laufvariable, "kandidaten": [], "bedingung": None}
+    info = {"laufvariable": laufvariable, "kandidaten": [], "bedingung": None,
+            "ausgegeben": _ausgegebene_namen(schleife)}
     # neuer Schleifenkörper: zuerst "ein Durchlauf beginnt" notieren ...
     neu = [_aufruf("__dg_start", ast.Name(id=laufvariable, ctx=ast.Load()))]
     for anweisung in schleife.body:
@@ -139,6 +153,7 @@ def _zeichnen(info, durchlaeufe, wunsch, namensraum):
         return [d for d in durchlaeufe if _ist_zahl(d["werte"].get(name)) and _ist_zahl(d["x"])]
 
     # Welche Variable wird gezeigt? Die gewünschte, sonst "anhalteweg",
+    # sonst die zuletzt berechnete Variable, die auch ausgegeben wird,
     # sonst die Variable, die in der Schleife zuletzt berechnet wird.
     if wunsch:
         if not zahlenreihe(wunsch):
@@ -147,6 +162,9 @@ def _zeichnen(info, durchlaeufe, wunsch, namensraum):
         y_name = wunsch
     else:
         reihenfolge = list(reversed(info["kandidaten"]))
+        ausgegeben = info.get("ausgegeben", set())
+        reihenfolge = ([n for n in reihenfolge if n in ausgegeben]
+                       + [n for n in reihenfolge if n not in ausgegeben])
         if "anhalteweg" in reihenfolge:
             reihenfolge.remove("anhalteweg")
             reihenfolge.insert(0, "anhalteweg")
@@ -253,9 +271,35 @@ def diagramm(zeile, zelle):
     _zeichnen(info, durchlaeufe, zeile.strip(), namensraum)
 
 
+def _magie_nach_oben(zeilen):
+    """Schiebt die Zeile %%diagramm an den Anfang der Zelle.
+
+    Jupyter erkennt %%diagramm nur in der allerersten Zeile. Steht darüber ein
+    Kommentar oder eine Leerzeile, käme sonst die Meldung "not found".
+    """
+    try:
+        for nummer, zeile in enumerate(zeilen):
+            wort = zeile.strip().split(" ")[0]
+            if wort == "%%diagramm":
+                if nummer == 0 and zeile.startswith("%%diagramm"):
+                    return zeilen
+                kopf = zeile.strip() + "\n"
+                return [kopf] + zeilen[:nummer] + zeilen[nummer + 1:]
+    except Exception:
+        pass
+    return zeilen
+
+
 def load_ipython_extension(shell):
     # macht dem Notebook bekannt, dass %%diagramm die Funktion diagramm aufruft
     shell.register_magic_function(diagramm, magic_kind="cell", magic_name="diagramm")
+    # vor jeder Ausführung prüfen, ob %%diagramm nach oben geschoben werden muss
+    try:
+        filter_ = shell.input_transformers_cleanup
+        filter_[:] = [f for f in filter_ if getattr(f, "__name__", "") != "_magie_nach_oben"]
+        filter_.append(_magie_nach_oben)
+    except Exception:
+        pass                            # ältere Jupyter-Version: %%diagramm muss dann ganz oben stehen
 
 
 # Diese Zeilen laufen bei "import diagramm" und melden %%diagramm an.
